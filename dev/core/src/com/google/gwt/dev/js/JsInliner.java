@@ -1024,8 +1024,6 @@ public class JsInliner {
         return x;
       }
 
-      containsNestedFunctionsCache.get().remove(callerFunction);
-
       // We've committed to the inlining, ensure the vars are created
       newLocalVariableStack.peek().addAll(extrudedNames);
 

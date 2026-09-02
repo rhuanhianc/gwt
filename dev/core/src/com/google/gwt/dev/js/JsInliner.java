@@ -625,6 +625,8 @@ public class JsInliner {
     private final InvocationCountingVisitor invocationCountingVisitor =
         new InvocationCountingVisitor();
     private final Stack<List<JsName>> newLocalVariableStack = Stack.create();
+    private final Map<JsFunction, Boolean> containsNestedFunctionsCache =
+        Maps.newIdentityHashMap();
 
     /**
      * A map containing the next integer to try as an identifier suffix for a
@@ -637,14 +639,6 @@ public class JsInliner {
      * Not a stack because program fragments aren't nested.
      */
     private JsFunction programFunction;
-
-    /**
-     * Caches {@link #containsNestedFunctions(JsFunction)}, which would otherwise re-traverse a
-     * whole function body at every call site. Invalidated for a function whenever this visitor
-     * rewrites that function's body.
-     */
-    private final Map<JsFunction, Boolean> containsNestedFunctionsCache =
-        Maps.newIdentityHashMap();
 
     public InliningVisitor(JsProgram program, Set<JsNode> whitelist) {
       this.whitelist = whitelist;
@@ -810,8 +804,6 @@ public class JsInliner {
          */
         op = accept(op);
         ctx.replaceMe(op);
-        // The accept above may have re-cached the caller while op was still detached.
-        containsNestedFunctionsCache.remove(callerFunction);
       }
 
       if (inlining.pop() != invokedFunction) {
@@ -1091,13 +1083,22 @@ public class JsInliner {
 
     /**
      * Examine a JsFunction to determine if it contains nested functions.
+     *
+     * <p>Memoized, since the answer would otherwise be recomputed at every call site. An inlined
+     * body is a {@link JsSafeCloner} clone and that cloner rejects anything holding a function,
+     * so inlining never moves a function into the caller it rewrites.
      */
     private boolean containsNestedFunctions(JsFunction func) {
-      return containsNestedFunctionsCache.computeIfAbsent(func, function -> {
-        NestedFunctionVisitor v = new NestedFunctionVisitor();
-        v.accept(function.getBody());
-        return v.containsNestedFunctions();
-      });
+      Boolean cached = containsNestedFunctionsCache.computeIfAbsent(
+          func, InliningVisitor::computeContainsNestedFunctions);
+      assert cached == computeContainsNestedFunctions(func) : "Stale nested function memo";
+      return cached;
+    }
+
+    private static boolean computeContainsNestedFunctions(JsFunction func) {
+      NestedFunctionVisitor v = new NestedFunctionVisitor();
+      v.accept(func.getBody());
+      return v.containsNestedFunctions();
     }
 
     /**
